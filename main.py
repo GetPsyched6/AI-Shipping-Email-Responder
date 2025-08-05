@@ -5,14 +5,13 @@ from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 
-import os
 from langchain.chat_models import init_chat_model
 
 from dotenv import load_dotenv
 
 load_dotenv()  # loads OPENAI_API_KEY
 
-llm = init_chat_model("openai:gpt-4o")
+llm = init_chat_model("openai:gpt-4.1-mini")
 
 
 class Email(TypedDict):
@@ -21,13 +20,14 @@ class Email(TypedDict):
     body: str
     customer_name: str
     email_type: str
+    key_details: List[str]
 
 
 class State(TypedDict, total=False):
     data_file: str
     raw_emails: str
     formatted_emails: List[Email]
-    categorized_emails: List[Email]
+    parsed_and_categorized_emails: List[Email]
 
 
 def extract_emails(state: State) -> State:
@@ -66,30 +66,32 @@ def format_emails(state: State) -> State:
     return {"formatted_emails": formatted_emails}
 
 
-def categorize_emails(state: State) -> State:
-    categorized_emails = []
+def parse_and_categorize_emails(state: State) -> State:
+    parsed_and_categorized_emails = []
     formatted_emails = state["formatted_emails"]
     for email in formatted_emails:
         prompt = (
             "The email is: {email}\n"
-            "I want you to reply 'tracking' if it is a tracking email or 'booking' if it is a booking email."
+            "I want you to reply 'tracking' if it is a tracking email or 'booking' if it is a booking email. Then in a new line I want you extract the following information if available (tracking number, booking ID, anything of that type) and write it as comma seperated values (no spaces)"
         ).format(email=str(email))
         result = llm.invoke(prompt)
-        email["email_type"] = result.content
-        categorized_emails.append(email)
-    return {"categorized_emails": categorized_emails}
+        email_info = result.content.split("\n")
+        email["email_type"] = email_info[0]
+        email["key_details"] = email_info[1].split(",")
+        parsed_and_categorized_emails.append(email)
+    return {"parsed_and_categorized_emails": parsed_and_categorized_emails}
 
 
 graph = StateGraph(State)
 graph.add_node("extract_emails", extract_emails)
 graph.add_node("format_emails", format_emails)
-graph.add_node("categorize_emails", categorize_emails)
+graph.add_node("parse_and_categorize_emails", parse_and_categorize_emails)
 
 graph.add_edge(START, "extract_emails")
 graph.add_edge("extract_emails", "format_emails")
-graph.add_edge("format_emails", "categorize_emails")
-graph.add_edge("categorize_emails", END)
+graph.add_edge("format_emails", "parse_and_categorize_emails")
+graph.add_edge("parse_and_categorize_emails", END)
 
 app = graph.compile()
 final_state = app.invoke({"data_file": "testdata.txt"})
-print(final_state["categorized_emails"])
+print(final_state["parsed_and_categorized_emails"])
