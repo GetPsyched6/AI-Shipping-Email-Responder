@@ -2,12 +2,11 @@
 # Use of this source code is governed by the Apache 2.0 License that can be
 # found in the LICENSE file.
 
-from typing import Annotated, List
+from typing import List
 
 from typing_extensions import TypedDict
 
 from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
 
 from langchain.chat_models import init_chat_model
 
@@ -35,7 +34,7 @@ class Email(TypedDict):
     customer_name: str
     email_type: str
     key_details: KeyDetails
-    api_response: dict
+    api_response: str
 
 
 class State(TypedDict, total=False):
@@ -44,6 +43,7 @@ class State(TypedDict, total=False):
     formatted_emails: List[Email]
     parsed_and_categorized_emails: List[Email]
     api_response_emails: List[Email]
+    llm_response_emails: List[str]
 
 
 def extract_emails(state: State) -> State:
@@ -93,13 +93,13 @@ def parse_and_categorize_emails(state: State) -> State:
         ).format(email=str(email))
         result = llm.invoke(prompt)
         email_info = result.content.split("\n")
-        email["email_type"] = email_info[0]
+        email["email_type"] = email_info[0].strip().lower()
         raw_key_details = email_info[1].split(",")
-        key_details["tracking_id"] = raw_key_details[0]
-        key_details["origin"] = raw_key_details[1]
-        key_details["destination"] = raw_key_details[2]
-        key_details["pickup_date"] = raw_key_details[3]
-        key_details["weight"] = raw_key_details[4]
+        key_details["tracking_id"] = raw_key_details[0].strip()
+        key_details["origin"] = raw_key_details[1].strip()
+        key_details["destination"] = raw_key_details[2].strip()
+        key_details["pickup_date"] = raw_key_details[3].strip()
+        key_details["weight"] = raw_key_details[4].strip()
         email["key_details"] = key_details
         parsed_and_categorized_emails.append(email)
     return {"parsed_and_categorized_emails": parsed_and_categorized_emails}
@@ -119,15 +119,28 @@ def call_api(state: State) -> State:
             }
             resp = requests.post("http://127.0.0.1:8000/book_shipment", json=payload)
             data = resp.json()
-            email["api_response"] = data
+            email["api_response"] = str(data)
 
-        if email["email_type"] == "tracking":
+        elif email["email_type"] == "tracking":
             payload = {"tracking_id": key_details["tracking_id"]}
             resp = requests.post("http://127.0.0.1:8000/track_shipment", json=payload)
             data = resp.json()
-            email["api_response"] = data
+            email["api_response"] = str(data)
         api_response_emails.append(email)
     return {"api_response_emails": api_response_emails}
+
+
+def llm_response_emails(state: State) -> State:
+    llm_response_emails = []
+    api_response_emails = state["api_response_emails"]
+    for email in api_response_emails:
+        prompt = (
+            "The email is: {email}\n"
+            "I want you to take the whole email in consideration, especially the api response part and write a customer facing email that is not too verbose that answers their request or concerns. Use the api response details to craft your mail, so if there is a confirmation id and eta (timeline), or status and a last seen, mention that. Sign off with 'LangChain Shipping Services'. Do not mention fake information, and if we don't have a specific piece of info, don't include it in the mail."
+        ).format(email=str(email))
+        result = llm.invoke(prompt)
+        llm_response_emails.append(result.content)
+    return {"llm_response_emails": llm_response_emails}
 
 
 graph = StateGraph(State)
@@ -135,19 +148,16 @@ graph.add_node("extract_emails", extract_emails)
 graph.add_node("format_emails", format_emails)
 graph.add_node("parse_and_categorize_emails", parse_and_categorize_emails)
 graph.add_node("call_api", call_api)
+graph.add_node("llm_response_emails", llm_response_emails)
 
 graph.add_edge(START, "extract_emails")
 graph.add_edge("extract_emails", "format_emails")
 graph.add_edge("format_emails", "parse_and_categorize_emails")
 graph.add_edge("parse_and_categorize_emails", "call_api")
-graph.add_edge("call_api", END)
+graph.add_edge("call_api", "llm_response_emails")
+graph.add_edge("llm_response_emails", END)
 
 app = graph.compile()
 final_state = app.invoke({"data_file": "testdata.txt"})
-# print(
-#     [
-#         [email["email_type"], email["api_response"]]
-#         for email in final_state["api_response_emails"]
-#     ]
-# )
-print(final_state["api_response_emails"])
+for email in final_state["llm_response_emails"]:
+    print(f"{email}\n---\n")

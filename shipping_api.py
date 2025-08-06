@@ -22,6 +22,7 @@ class TrackingRequest(BaseModel):
 
 class BookingResponse(BaseModel):
     confirmation_id: str
+    quote: str
     eta_days: int
 
 
@@ -34,6 +35,7 @@ class TrackingResponse(BaseModel):
 def book_shipment(req: BookingRequest):
     return BookingResponse(
         confirmation_id=f"BK{random.randint(10000, 99999)}",
+        quote=f"${random.randint(200, 1000)}",
         eta_days=random.randint(1, 50),
     )
 
