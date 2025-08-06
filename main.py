@@ -1,3 +1,7 @@
+# Copyright 2025 (c) Roshin Nishad. All rights reserved.
+# Use of this source code is governed by the Apache 2.0 License that can be
+# found in the LICENSE file.
+
 from typing import Annotated, List
 
 from typing_extensions import TypedDict
@@ -72,7 +76,7 @@ def parse_and_categorize_emails(state: State) -> State:
     for email in formatted_emails:
         prompt = (
             "The email is: {email}\n"
-            "I want you to reply 'tracking' if it is a tracking email or 'booking' if it is a booking email. Then in a new line I want you extract the following information if available (tracking number, booking ID, anything of that type) and write it as comma seperated values (no spaces)"
+            "I want you to reply 'tracking' if it is a tracking email or 'booking' if it is a booking email. Then in a new line I want you extract the following information if available (tracking number, booking ID, locations like x to y, item type like fragile etc., dates etc) and write it as comma seperated values (no spaces) with a label attached like 'tracking number: ---,date: July 7' etc."
         ).format(email=str(email))
         result = llm.invoke(prompt)
         email_info = result.content.split("\n")
@@ -94,4 +98,4 @@ graph.add_edge("parse_and_categorize_emails", END)
 
 app = graph.compile()
 final_state = app.invoke({"data_file": "testdata.txt"})
-print(final_state["parsed_and_categorized_emails"])
+print([email["key_details"] for email in final_state["parsed_and_categorized_emails"]])
